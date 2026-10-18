@@ -10,6 +10,9 @@
 
 ---
 
+DEPLOYED ON STREAMLIT - https://bioretrosynthesis-advanced-cmwrxjryhb9snf2noiq2sx.streamlit.app/
+
+---
 ## 🌟 Key Features
 
 - **🔬 Multi-Format Molecular Input:** Enter SMILES, Chemical Names (e.g. *Aspirin*, *Caffeine*), Molecular Formulas, or CAS numbers.
@@ -41,16 +44,6 @@ streamlit run streamlit_app.py
 Open **http://localhost:8501** in your browser.
 
 ---
-
-## ☁️ Deploy to Streamlit Community Cloud (2 Minutes)
-
-1. Go to **[share.streamlit.io](https://share.streamlit.io)** and log in with your GitHub account (`mayurOG`).
-2. Click **New app** and select:
-   - **Repository:** `mayurOG/BIORETROSYNTHESIS-`
-   - **Branch:** `main`
-   - **Main file path:** `streamlit_app.py`
-3. Click **Deploy!**
-
 ---
 
 ## 📁 Repository Structure
