@@ -300,10 +300,61 @@ st.markdown("""
         margin: 3px;
     }
 
-    /* Expander styling */
-    [data-testid="stExpander"] details summary span {
-        color: #ffffff !important;
-        font-weight: 600 !important;
+    /* Route comparison card styles */
+    .route-card {
+        background: rgba(30, 41, 59, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 14px;
+        padding: 16px 18px;
+        margin-bottom: 14px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .route-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(129, 140, 248, 0.6);
+    }
+    .badge-recommended {
+        display: inline-block;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: white !important;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        margin-bottom: 8px;
+    }
+    .badge-green {
+        display: inline-block;
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white !important;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        margin-bottom: 8px;
+    }
+    .badge-alt {
+        display: inline-block;
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+        color: white !important;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        margin-bottom: 8px;
+    }
+    .exec-brief-box {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+        border-left: 4px solid #818cf8;
+        border-radius: 12px;
+        padding: 18px 22px;
+        margin: 16px 0;
+        color: #f1f5f9;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     }
 
     /* Hide Streamlit branding */
@@ -474,61 +525,47 @@ def predict_retrosynthesis(smiles: str, max_depth: int = 5, num_beams: int = 3) 
     return _rdkit_retrosynthesis(smiles, max_depth)
 
 
-def _rdkit_retrosynthesis(smiles: str, max_depth: int = 5) -> List[Dict]:
+def _rdkit_retrosynthesis(
+    smiles: str,
+    max_depth: int = 5,
+    skip_root_template_idx: Optional[int] = None,
+    stop_on_building_blocks: bool = True,
+    building_blocks: Optional[set] = None,
+) -> List[Dict]:
     """
     RDKit-based retrosynthesis using SMARTS reaction templates.
-    This provides real chemical disconnections — not fake data.
-    Templates are ordered from most specific to least specific so that
-    functional-group-aware disconnections fire first.
+    Supports strategy variations: skipping specific root templates and conditional early termination on building blocks.
     """
-    # Retrosynthetic reaction templates (product >> reactants)
-    # Ordered: most specific functional-group transforms first,
-    # generic C–C bond-breaking last.
     RETRO_TEMPLATES = [
         # ----- Highest priority: heteroatom-containing functional groups -----
-        # #6 = any carbon (aromatic or aliphatic); [C] = aliphatic only.
-        # Ester hydrolysis: R-C(=O)-O-R' >> R-COOH + R'OH
         ("[C:1](=[O:2])[O:3][#6:4]", "[C:1](=[O:2])O.[#6:4]O", "ester_hydrolysis"),
-        # Amide bond cleavage: R-C(=O)-NHR >> R-COOH + RNH2
         ("[C:1](=[O:2])[NH:3][#6:4]", "[C:1](=[O:2])O.[NH2:3][#6:4]", "amide_hydrolysis"),
-        # Amide (terminal): R-C(=O)-NH2 >> R-COOH + NH3  (low value, skip)
-        # Carbamate / urethane: R-O-C(=O)-NR >> ROH + RNCO
         ("[#6:1][O:2][C:3](=[O:4])[N:5]", "[#6:1][O:2].[C:3](=[O:4])=[N:5]", "carbamate_disconnection"),
-        # Sulfonamide: R-SO2-NHR >> R-SO2Cl + R'NH2
         ("[#6:1][S:2](=[O:3])(=[O:4])[NH:5][#6:6]",
          "[#6:1][S:2](=[O:3])(=[O:4])Cl.[NH2:5][#6:6]", "sulfonamide_disconnection"),
 
         # ----- Medium priority: C–heteroatom bonds -----
-        # Williamson ether (skip if already matched as ester): R-O-R' >> ROH + R'Br
         ("[#6:1][O:2][#6:3]", "[#6:1][O:2].[#6:3]Br", "ether_disconnection"),
-        # C-N disconnection: R-NHR' >> RBr + R'NH2
         ("[#6:1][NH:2][#6:3]", "[#6:1]Br.[NH2:2][#6:3]", "CN_disconnection"),
-        # Thioether: R-S-R' >> RSH + R'Br
         ("[#6:1][S:2][#6:3]", "[#6:1][S:2].[#6:3]Br", "thioether_disconnection"),
 
         # ----- Coupling / named reactions -----
-        # Suzuki coupling reverse: Ar-Ar' >> ArBr + Ar'B(OH)2
         ("[c:1]-[c:2]", "[c:1]Br.[c:2]B(O)O", "suzuki_disconnection"),
-        # Friedel-Crafts acylation reverse: Ar-CO-R >> ArH + RCOCl
         ("[c:1][C:2](=[O:3])[#6:4]", "[cH:1].[C:2](=[O:3])([#6:4])Cl", "friedel_crafts_retro"),
-        # Aldol retro: β-hydroxy ketone >> aldehyde + ketone
         ("[#6:1][CH:2]([OH:3])[CH2:4][C:5]=[O:6]",
          "[#6:1][CH:2]=[O:3].[CH3:4][C:5]=[O:6]", "aldol_retro"),
 
         # ----- N-alkyl / heterocycle disconnections -----
-        # N-demethylation on aromatic N: n-CH3 >> nH + CH3-X
         ("[n:1][CH3:2]", "[nH:1].[CH3:2]Br", "N_demethylation"),
-        # N-dealkylation: N-C >> NH + C-Br
         ("[N:1]([#6:2])[CH3:3]", "[NH:1][#6:2].[CH3:3]Br", "N_dealkylation"),
-        # Buchwald-Hartwig retro: Ar-N >> ArBr + HN
         ("[c:1][N:2]([#6:3])[#6:4]", "[c:1]Br.[NH:2]([#6:3])[#6:4]", "buchwald_hartwig_retro"),
 
         # ----- Lowest priority: generic C–C -----
-        # Produces halide + fragment (no Grignard reagents)
         ("[C:1]-[C:2]", "[C:1]Br.[C:2]", "CC_disconnection"),
     ]
 
-    building_blocks = _get_building_blocks()
+    if building_blocks is None:
+        building_blocks = _get_building_blocks()
     pathway = []
     frontier = [smiles]
     expanded = set()
@@ -543,16 +580,17 @@ def _rdkit_retrosynthesis(smiles: str, max_depth: int = 5) -> List[Dict]:
                 continue
             expanded.add(canon)
 
-            if canon in building_blocks:
+            if stop_on_building_blocks and canon in building_blocks and depth > 1:
                 continue
 
             mol = Chem.MolFromSmiles(mol_smiles)
             if mol is None:
                 continue
 
-            # Try each retrosynthetic template
             found_reaction = False
-            for reactant_smarts, product_smarts, rxn_name in RETRO_TEMPLATES:
+            for t_idx, (reactant_smarts, product_smarts, rxn_name) in enumerate(RETRO_TEMPLATES):
+                if depth == 1 and skip_root_template_idx is not None and t_idx == skip_root_template_idx:
+                    continue
                 pattern = Chem.MolFromSmarts(reactant_smarts)
                 if pattern is None:
                     continue
@@ -564,7 +602,6 @@ def _rdkit_retrosynthesis(smiles: str, max_depth: int = 5) -> List[Dict]:
                             continue
                         products = rxn.RunReactants((mol,))
                         if products:
-                            # Take first valid set
                             for product_set in products:
                                 reactant_smiles = []
                                 valid = True
@@ -582,7 +619,6 @@ def _rdkit_retrosynthesis(smiles: str, max_depth: int = 5) -> List[Dict]:
                                         break
 
                                 if valid and reactant_smiles and len(reactant_smiles) >= 1:
-                                    # Avoid trivial decompositions
                                     if any(r == mol_smiles for r in reactant_smiles):
                                         continue
                                     pathway.append({
@@ -600,7 +636,6 @@ def _rdkit_retrosynthesis(smiles: str, max_depth: int = 5) -> List[Dict]:
                         continue
 
             if not found_reaction and mol.GetNumHeavyAtoms() > 3:
-                # Fallback: simple bond disconnection on the most central bond
                 reactants = _simple_disconnection(mol)
                 if reactants:
                     pathway.append({
@@ -614,6 +649,143 @@ def _rdkit_retrosynthesis(smiles: str, max_depth: int = 5) -> List[Dict]:
         frontier = next_frontier
 
     return pathway
+
+
+def predict_multiple_routes(smiles: str, max_depth: int = 4, num_beams: int = 3) -> List[Dict]:
+    """
+    Generate multiple diverse, chemically valid retrosynthetic pathways.
+    Strategy 1: Optimal Convergent (Terminates when bio-derived building blocks are reached)
+    Strategy 2: Stepwise Deep Route (Explores deeper fragmentation for alternative feedstocks)
+    Strategy 3: Alternative Disconnection (Dissects secondary functional group/bond first)
+    """
+    building_blocks = _get_building_blocks()
+    routes = []
+    seen = set()
+
+    def pway_sig(p):
+        return tuple(sorted((s["product"], tuple(sorted(s["reactants"]))) for s in p))
+
+    # Route 1: Optimal Convergent
+    r1 = _rdkit_retrosynthesis(smiles, max_depth=max_depth, stop_on_building_blocks=True, building_blocks=building_blocks)
+    if r1:
+        seen.add(pway_sig(r1))
+        routes.append({
+            "route_id": 1,
+            "strategy_name": "Optimal Convergent Pathway",
+            "strategy_desc": "High-priority functional cleavage, terminating immediately when registered bio-renewable precursors are reached.",
+            "pathway": r1,
+        })
+
+    # Route 2: Deep Stepwise Catalytic Route
+    r2 = _rdkit_retrosynthesis(smiles, max_depth=max(2, max_depth), stop_on_building_blocks=False, building_blocks=building_blocks)
+    if r2 and pway_sig(r2) not in seen:
+        seen.add(pway_sig(r2))
+        routes.append({
+            "route_id": len(routes) + 1,
+            "strategy_name": "Stepwise Deep Route",
+            "strategy_desc": "Deeper chemical fragmentation down to fundamental precursors, maximizing synthetic flexibility.",
+            "pathway": r2,
+        })
+
+    # Route 3: Alternative Disconnection Strategy (skips primary transform on root)
+    for skip_i in range(5):
+        r3 = _rdkit_retrosynthesis(smiles, max_depth=max_depth, skip_root_template_idx=skip_i, stop_on_building_blocks=True, building_blocks=building_blocks)
+        if r3 and pway_sig(r3) not in seen:
+            seen.add(pway_sig(r3))
+            routes.append({
+                "route_id": len(routes) + 1,
+                "strategy_name": "Alternative Disconnection Route",
+                "strategy_desc": "Cleaves secondary functional groups first, establishing an orthogonal synthetic sequence.",
+                "pathway": r3,
+            })
+            break
+
+    # If only 1 route, generate a single-stage direct route
+    if len(routes) < 2 and max_depth > 1:
+        r_direct = _rdkit_retrosynthesis(smiles, max_depth=1, stop_on_building_blocks=False)
+        if r_direct and pway_sig(r_direct) not in seen:
+            routes.append({
+                "route_id": len(routes) + 1,
+                "strategy_name": "Direct Single-Stage Route",
+                "strategy_desc": "Single-step retrosynthetic disconnection to immediate precursors.",
+                "pathway": r_direct,
+            })
+
+    return routes
+
+
+def score_and_rank_routes(diverse_routes: List[Dict], building_blocks: set) -> List[Dict]:
+    """Score, enrich, and rank candidate retrosynthesis pathways."""
+    raw_pathways = [r["pathway"] for r in diverse_routes]
+    scored = compare_routes(raw_pathways, building_blocks)
+
+    enriched = []
+    for item in scored:
+        idx = item["route_id"] - 1
+        meta = diverse_routes[idx] if idx < len(diverse_routes) else {}
+        pathway = item["pathway"]
+
+        # Terminal precursors (reactants not produced by any step)
+        non_terminal = {s["product"] for s in pathway}
+        terminal = set()
+        for s in pathway:
+            for r in s["reactants"]:
+                if r not in non_terminal:
+                    terminal.add(r)
+
+        bio_hits = sum(1 for r in terminal if r in building_blocks or (
+            Chem.MolFromSmiles(r) and Chem.MolToSmiles(Chem.MolFromSmiles(r)) in building_blocks
+        ))
+        bio_pct = (bio_hits / max(1, len(terminal))) * 100.0
+
+        # Cumulative yield estimate
+        cum_yield = 1.0
+        for s in pathway:
+            f = item["score"].chemical_feasibility
+            cum_yield *= (0.75 + 0.20 * f)
+        cum_yield_pct = cum_yield * 100.0
+
+        enriched.append({
+            "route_id": item["route_id"],
+            "strategy_name": meta.get("strategy_name", f"Pathway #{item['route_id']}"),
+            "strategy_desc": meta.get("strategy_desc", "Retrosynthetic transformation sequence."),
+            "pathway": pathway,
+            "score": item["score"],
+            "num_steps": len(pathway),
+            "max_depth": max((s["depth"] for s in pathway), default=1),
+            "terminal_reactants": terminal,
+            "bio_bb_count": bio_hits,
+            "bio_coverage_pct": bio_pct,
+            "cumulative_yield_pct": cum_yield_pct,
+            "overall_score": item["score"].overall_score,
+            "feasibility": item["score"].chemical_feasibility,
+            "confidence": item["score"].reaction_confidence,
+            "sa_score": item["score"].synthetic_accessibility,
+        })
+
+    if enriched:
+        enriched.sort(key=lambda x: x["overall_score"], reverse=True)
+        enriched[0]["award_badge"] = "🏆 Recommended (Optimal Composite)"
+        enriched[0]["badge_class"] = "badge-recommended"
+
+        # Tag greenest
+        greenest = max(enriched, key=lambda x: x["bio_coverage_pct"])
+        if "award_badge" not in greenest:
+            greenest["award_badge"] = "🌿 Green Bio-Preferred"
+            greenest["badge_class"] = "badge-green"
+
+        # Tag shortest
+        shortest = min(enriched, key=lambda x: x["num_steps"])
+        if "award_badge" not in shortest:
+            shortest["award_badge"] = "⚡ Most Convergent (Fewest Steps)"
+            shortest["badge_class"] = "badge-alt"
+
+        for r in enriched:
+            if "award_badge" not in r:
+                r["award_badge"] = "🧪 Alternative Pathway"
+                r["badge_class"] = "badge-alt"
+
+    return enriched
 
 
 def _simple_disconnection(mol) -> Optional[List[str]]:
@@ -1132,64 +1304,294 @@ def render_reaction_center(step: Dict, idx: int):
 #  VISUALIZATION: Multi-Route Comparison
 # ============================================================================
 
-def render_route_comparison(scored_routes: List[Dict]):
-    """Render a comparative view of multiple routes."""
+def render_route_comparison(scored_routes: List[Dict], target_smiles: str = "", building_blocks: Optional[set] = None):
+    """
+    Render a comprehensive, state-of-the-art Multi-Route Analysis & Strategic Decision Platform.
+    Includes:
+    - Executive AI Strategic Synthesis Brief
+    - Side-by-Side Route KPI Scorecards & Badges
+    - Multi-Objective Polar Radar Plot (Dark Theme)
+    - Grouped Analytical Metric Bar Charts (Yield, Steps, Bio-feedstock, Feasibility)
+    - Interactive Side-by-Side Step-by-Step Pathway Inspector with 2D structures
+    - Complete Analytical Decision Matrix (Table)
+    - CSV & JSON Export
+    """
     if not scored_routes:
-        st.info("No routes to compare")
+        st.info("No comparative routes available.")
         return
 
-    # Radar chart comparing routes
-    categories = ["Confidence", "SA", "Feasibility", "Diversity", "1-Uncertainty", "1-Cost"]
+    if building_blocks is None:
+        building_blocks = _get_building_blocks()
 
-    fig = go.Figure()
-    colors = ["#667eea", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"]
+    # ----------------------------------------------------------------
+    #  1. EXECUTIVE AI SYNTHESIS STRATEGIC BRIEF
+    # ----------------------------------------------------------------
+    best_route = scored_routes[0]
+    greenest_route = max(scored_routes, key=lambda r: r.get("bio_coverage_pct", 0.0))
+    shortest_route = min(scored_routes, key=lambda r: r.get("num_steps", 999))
 
-    for i, route_data in enumerate(scored_routes[:5]):
-        s = route_data["score"]
-        values = [
-            s.reaction_confidence,
-            s.synthetic_accessibility,
-            s.chemical_feasibility,
-            s.route_diversity,
-            1.0 - s.uncertainty,
-            1.0 - s.estimated_cost,
-        ]
-        fig.add_trace(go.Scatterpolar(
-            r=values + [values[0]],
-            theta=categories + [categories[0]],
-            fill='toself',
-            name=f"Route #{route_data['route_id']} (Score: {s.overall_score:.2f})",
-            line=dict(color=colors[i % len(colors)]),
-            opacity=0.7,
+    brief_html = f"""
+    <div class="exec-brief-box">
+        <div style="font-size:1.15rem; font-weight:700; color:#ffffff; margin-bottom:6px;">
+            💡 Executive Synthesis Strategic Brief
+        </div>
+        <div style="font-size:0.92rem; color:#cbd5e1; line-height:1.6;">
+            • <b>Primary Recommendation:</b> <b>Route #{best_route['route_id']} ({best_route['strategy_name']})</b> achieves the top multi-objective score of <b>{best_route['overall_score']:.2f}</b>, combining high feasibility (<b>{best_route['feasibility']:.2f}</b>) and an estimated cumulative yield of <b>{best_route['cumulative_yield_pct']:.1f}%</b> across <b>{best_route['num_steps']} reaction step(s)</b>.<br>
+            • <b>Bio-Renewability & Green Footprint:</b> <b>Route #{greenest_route['route_id']}</b> maximizes sustainability with <b>{greenest_route['bio_coverage_pct']:.0f}%</b> of starting precursors sourced directly from biological/metabolic feedstocks ({greenest_route['bio_bb_count']} bio-building block(s)).<br>
+            • <b>Directness & Scalability:</b> <b>Route #{shortest_route['route_id']}</b> delivers the fastest laboratory conversion with the fewest synthetic transformations (<b>{shortest_route['num_steps']} step(s)</b>).
+        </div>
+    </div>
+    """
+    st.markdown(brief_html, unsafe_allow_html=True)
+
+    # ----------------------------------------------------------------
+    #  2. SIDE-BY-SIDE ROUTE KPI SCORECARDS
+    # ----------------------------------------------------------------
+    st.markdown("#### 📊 Candidate Route Scorecards")
+    route_cols = st.columns(min(len(scored_routes), 3))
+
+    for idx, r_data in enumerate(scored_routes[:3]):
+        with route_cols[idx]:
+            badge_html = f'<span class="{r_data.get("badge_class", "badge-recommended")}">{r_data.get("award_badge", "Candidate Route")}</span>'
+            st.markdown(badge_html, unsafe_allow_html=True)
+            st.markdown(f"**Route #{r_data['route_id']}: {r_data['strategy_name']}**")
+            st.caption(r_data.get("strategy_desc", ""))
+
+            # Score Progress Bar
+            ov_score = float(r_data.get("overall_score", 0.0))
+            st.progress(min(1.0, max(0.0, ov_score)), text=f"Overall Composite Score: {ov_score:.2f}")
+
+            # Sub-metrics grid
+            m1, m2 = st.columns(2)
+            m1.metric("Steps", f"{r_data['num_steps']}", help="Total number of retrosynthetic steps")
+            m2.metric("Est. Yield", f"{r_data.get('cumulative_yield_pct', 0.0):.1f}%", help="Compounded estimated reaction yield")
+
+            m3, m4 = st.columns(2)
+            m3.metric("Bio-Feedstock", f"{r_data.get('bio_coverage_pct', 0.0):.0f}%", help="Percentage of starting materials in bio-building block registry")
+            m4.metric("Feasibility", f"{r_data.get('feasibility', 0.0):.2f}", help="Average reaction feasibility score (0-1)")
+
+            # Starting Precursors Chips
+            st.markdown("<div style='font-size:0.8rem; font-weight:600; color:#94a3b8; margin-top:8px;'>STARTING PRECURSORS:</div>", unsafe_allow_html=True)
+            term_smi = list(r_data.get("terminal_reactants", []))
+            chips_html = " ".join(
+                f'<span class="info-chip" title="{smi}">'
+                f'{"🌿 " if (smi in building_blocks or (Chem.MolFromSmiles(smi) and Chem.MolToSmiles(Chem.MolFromSmiles(smi)) in building_blocks)) else "🧪 "}'
+                f'{smi[:15]}...</span>'
+                for smi in term_smi[:4]
+            )
+            st.markdown(chips_html if chips_html else "<span style='color:#64748b;'>None</span>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ----------------------------------------------------------------
+    #  3. MULTI-OBJECTIVE RADAR & TRADE-OFF VISUALIZATIONS
+    # ----------------------------------------------------------------
+    col_radar, col_bars = st.columns([1, 1])
+
+    with col_radar:
+        st.markdown("#### 🎯 Multi-Objective Trade-Off (Spider / Radar)")
+        categories = ["Feasibility", "Bio-Feedstock", "Est. Yield", "Step Efficiency", "1 - Complexity", "Confidence"]
+        fig_radar = go.Figure()
+        palette = ["#818cf8", "#10b981", "#f59e0b", "#ec4899", "#38bdf8"]
+
+        for i, rd in enumerate(scored_routes[:5]):
+            s = rd["score"]
+            step_eff = 1.0 / (rd["num_steps"] + 0.5)
+            bio_norm = rd.get("bio_coverage_pct", 0.0) / 100.0
+            yield_norm = rd.get("cumulative_yield_pct", 0.0) / 100.0
+            sa_norm = max(0.0, 1.0 - (s.synthetic_accessibility / 5.0))
+
+            vals = [
+                s.chemical_feasibility,
+                bio_norm,
+                yield_norm,
+                step_eff,
+                sa_norm,
+                s.reaction_confidence,
+            ]
+            fig_radar.add_trace(go.Scatterpolar(
+                r=vals + [vals[0]],
+                theta=categories + [categories[0]],
+                fill='toself',
+                name=f"Route #{rd['route_id']} ({rd['strategy_name'][:14]})",
+                line=dict(color=palette[i % len(palette)], width=2),
+                opacity=0.65,
+            ))
+
+        fig_radar.update_layout(
+            polar=dict(
+                radialaxis=dict(visible=True, range=[0, 1], color='#94a3b8', gridcolor='#334155'),
+                angularaxis=dict(color='#ffffff', gridcolor='#334155'),
+                bgcolor='rgba(15,23,42,0.8)',
+            ),
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font=dict(color='#ffffff', size=11)),
+            height=430,
+            paper_bgcolor='#0e1117',
+            margin=dict(l=35, r=35, t=30, b=50),
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+    with col_bars:
+        st.markdown("#### 📈 Key Metrics Direct Comparison")
+        route_names = [f"Route #{rd['route_id']}" for rd in scored_routes]
+        fig_bar = go.Figure()
+
+        # Step Count
+        fig_bar.add_trace(go.Bar(
+            name='Reaction Steps',
+            x=route_names,
+            y=[rd['num_steps'] for rd in scored_routes],
+            marker_color='#818cf8',
+        ))
+        # Cumulative Yield (%)
+        fig_bar.add_trace(go.Bar(
+            name='Est. Yield (%)',
+            x=route_names,
+            y=[rd.get('cumulative_yield_pct', 0.0) for rd in scored_routes],
+            marker_color='#10b981',
+        ))
+        # Bio-Feedstock (%)
+        fig_bar.add_trace(go.Bar(
+            name='Bio-Feedstock (%)',
+            x=route_names,
+            y=[rd.get('bio_coverage_pct', 0.0) for rd in scored_routes],
+            marker_color='#f59e0b',
+        ))
+        # Feasibility x 100
+        fig_bar.add_trace(go.Bar(
+            name='Feasibility Score (x100)',
+            x=route_names,
+            y=[rd.get('feasibility', 0.0) * 100.0 for rd in scored_routes],
+            marker_color='#38bdf8',
         ))
 
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 1]),
-            bgcolor='rgba(248,250,252,0.8)',
-        ),
-        showlegend=True,
-        title="Route Comparison — Multi-Objective Scores",
-        height=500,
-        paper_bgcolor='rgba(248,250,252,1)',
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        fig_bar.update_layout(
+            barmode='group',
+            height=430,
+            paper_bgcolor='#0e1117',
+            plot_bgcolor='rgba(15,23,42,0.8)',
+            font=dict(color='#ffffff'),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font=dict(color='#ffffff', size=11)),
+            yaxis=dict(gridcolor='#334155', title="Value / Percentage"),
+            xaxis=dict(gridcolor='#334155'),
+            margin=dict(l=30, r=20, t=30, b=50),
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-    # Table comparison
-    rows = []
+    # ----------------------------------------------------------------
+    #  4. INTERACTIVE STEP-BY-STEP PATHWAY INSPECTOR
+    # ----------------------------------------------------------------
+    st.markdown("#### 🔍 Interactive Step-by-Step Pathway Inspector")
+    route_labels = [
+        f"Route #{r['route_id']}: {r['strategy_name']} ({r.get('award_badge', '').split()[0]})"
+        for r in scored_routes
+    ]
+    selected_idx = st.selectbox(
+        "Choose Route to inspect chemical transformations:",
+        options=range(len(scored_routes)),
+        format_func=lambda i: route_labels[i],
+        key="inspect_route_select",
+    )
+
+    chosen_route = scored_routes[selected_idx]
+    pathway_steps = chosen_route["pathway"]
+
+    st.markdown(f"**Inspecting {chosen_route['strategy_name']}** — *{chosen_route.get('strategy_desc', '')}*")
+
+    for step_num, step in enumerate(pathway_steps, 1):
+        with st.container():
+            st.markdown(f"""
+            <div style="background:rgba(30,41,59,0.5); border:1px solid rgba(148,163,184,0.15); border-radius:12px; padding:14px 18px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-weight:700; color:#ffffff; font-size:1.05rem;">Step {step_num} of {len(pathway_steps)}: <span style="color:#818cf8;">{step.get('reaction_type', 'transformation')}</span></span>
+                    <span class="info-chip">Depth: {step.get('depth', 1)}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            c_prod, c_arrow, c_react = st.columns([1.2, 0.6, 2.2])
+            with c_prod:
+                st.caption("Product")
+                render_molecule_image(step["product"], caption=step["product"][:22], size=220, use_container_width=True)
+
+            with c_arrow:
+                st.markdown("<div style='text-align:center; font-size:2rem; color:#818cf8; padding-top:40px;'>⟶</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align:center;'><span class='reaction-class'>{step.get('reaction_type', 'reaction')}</span></div>", unsafe_allow_html=True)
+
+            with c_react:
+                st.caption(f"Precursors ({len(step['reactants'])})")
+                r_cols = st.columns(min(len(step["reactants"]), 3))
+                for r_i, reactant in enumerate(step["reactants"]):
+                    with r_cols[r_i % len(r_cols)]:
+                        render_molecule_image(reactant, caption=reactant[:18], size=180, use_container_width=True)
+                        is_bb = reactant in building_blocks or (
+                            Chem.MolFromSmiles(reactant) and Chem.MolToSmiles(Chem.MolFromSmiles(reactant)) in building_blocks
+                        )
+                        if is_bb:
+                            st.markdown("<span style='color:#10b981; font-size:0.78rem; font-weight:600;'>🌿 Bio-Building Block</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("<span style='color:#94a3b8; font-size:0.78rem;'>🧪 Intermediate</span>", unsafe_allow_html=True)
+
+    # ----------------------------------------------------------------
+    #  5. COMPREHENSIVE ROUTE DECISION MATRIX (Table)
+    # ----------------------------------------------------------------
+    st.markdown("#### 📋 Route Comparison Decision Matrix")
+    matrix_rows = []
     for rd in scored_routes:
         s = rd["score"]
-        rows.append({
-            "Route": f"#{rd['route_id']}",
+        matrix_rows.append({
+            "Route": f"Route #{rd['route_id']}",
+            "Strategy": rd["strategy_name"],
+            "Rank Badge": rd.get("award_badge", ""),
+            "Overall Score": f"{rd.get('overall_score', s.overall_score):.3f}",
             "Steps": rd["num_steps"],
-            "Overall": f"{s.overall_score:.3f}",
-            "Confidence": f"{s.reaction_confidence:.3f}",
-            "SA": f"{s.synthetic_accessibility:.3f}",
-            "Feasibility": f"{s.chemical_feasibility:.3f}",
-            "Uncertainty": f"{s.uncertainty:.3f}",
-            "Cost": f"{s.estimated_cost:.3f}",
+            "Est. Cumulative Yield": f"{rd.get('cumulative_yield_pct', 0.0):.1f}%",
+            "Bio-Feedstock %": f"{rd.get('bio_coverage_pct', 0.0):.0f}%",
+            "Chemical Feasibility": f"{s.chemical_feasibility:.3f}",
+            "Reaction Confidence": f"{s.reaction_confidence:.3f}",
+            "SA Complexity": f"{s.synthetic_accessibility:.3f}",
+            "Starting Precursors Count": len(rd.get("terminal_reactants", [])),
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    matrix_df = pd.DataFrame(matrix_rows)
+    st.dataframe(matrix_df, use_container_width=True, hide_index=True)
+
+    # ----------------------------------------------------------------
+    #  6. DOWNLOAD & EXPORT SUITE
+    # ----------------------------------------------------------------
+    c_csv, c_json = st.columns([1, 1])
+    with c_csv:
+        csv_data = matrix_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "📥 Download Route Comparison (CSV)",
+            data=csv_data,
+            file_name="multi_route_comparison_matrix.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with c_json:
+        json_export = json.dumps([
+            {
+                "route_id": rd["route_id"],
+                "strategy": rd["strategy_name"],
+                "badge": rd.get("award_badge", ""),
+                "overall_score": rd.get("overall_score", 0.0),
+                "steps": rd["num_steps"],
+                "cumulative_yield_pct": rd.get("cumulative_yield_pct", 0.0),
+                "bio_coverage_pct": rd.get("bio_coverage_pct", 0.0),
+                "terminal_precursors": list(rd.get("terminal_reactants", [])),
+                "pathway": rd["pathway"],
+            }
+            for rd in scored_routes
+        ], indent=2).encode('utf-8')
+        st.download_button(
+            "📥 Download Full Multi-Route Diagnostics (JSON)",
+            data=json_export,
+            file_name="multi_route_diagnostics.json",
+            mime="application/json",
+            use_container_width=True,
+        )
 
 
 # ============================================================================
@@ -1533,27 +1935,22 @@ if predict_btn or (user_input and st.session_state.get("_last_input") != user_in
                                 st.plotly_chart(fig_r, use_container_width=True)
 
         # ----------------------------------------------------------------
-        #  MULTI-ROUTE COMPARISON (generate variant routes)
+        #  MULTI-ROUTE COMPARISON (Advanced Multi-Objective Suite)
         # ----------------------------------------------------------------
-        st.markdown('<div class="section-header">🔄 Multi-Route Comparison</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">🔄 Multi-Route Strategic Comparison Suite</div>', unsafe_allow_html=True)
 
-        # Generate alternative routes by varying depth/approach
-        routes = [pathway]
+        with st.spinner("🔄 Generating diverse candidate pathways and running multi-objective ranking..."):
+            candidate_routes = predict_multiple_routes(smiles, max_depth=max_depth, num_beams=num_beams)
+            if not candidate_routes:
+                candidate_routes = [{
+                    "route_id": 1,
+                    "strategy_name": "Primary Predicted Pathway",
+                    "strategy_desc": "Standard retrosynthetic tree search.",
+                    "pathway": pathway,
+                }]
+            scored_routes = score_and_rank_routes(candidate_routes, building_blocks)
 
-        # Try to get an alternative route with different depth
-        if max_depth >= 2:
-            alt_pathway = predict_retrosynthesis(smiles, max_depth=max(1, max_depth - 1), num_beams=num_beams)
-            if alt_pathway and alt_pathway != pathway:
-                routes.append(alt_pathway)
-
-        if len(routes) > 1:
-            scored = compare_routes(routes, building_blocks)
-            render_route_comparison(scored)
-        else:
-            st.info("Only one route was found. Increase max depth or try a more complex molecule for multi-route comparison.")
-            # Still show single route in radar format
-            scored = compare_routes(routes, building_blocks)
-            render_route_comparison(scored)
+        render_route_comparison(scored_routes, smiles, building_blocks)
 
         # ----------------------------------------------------------------
         #  FULL DIAGNOSTICS
