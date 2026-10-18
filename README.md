@@ -3,7 +3,7 @@
 > **Advanced Retrosynthesis Visualization, Planning & Prediction Platform**  
 > Interactive Search Tree • 3D Molecular Conformers • Reaction-Center Analysis • Multi-Objective Route Scoring
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io)](https://bioretrosynthesis-advanced-cmwrxjryhb9snf2noiq2sx.streamlit.app/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![RDKit](https://img.shields.io/badge/chemistry-RDKit-green.svg)](https://www.rdkit.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
