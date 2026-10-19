@@ -508,21 +508,22 @@ def _load_real_engine():
 
     bundle = load_model(str(PROJECT_ROOT / "final_model"))
     blocks = BuildingBlockIndex.from_csv(str(PROJECT_ROOT / "bio_building_block.csv"))
-    return RetroEngine(
-        bundle["model"], bundle["tokenizer"], blocks,
-        num_beams=3, constrained=True, batch_size=16,
-    ), blocks
+    return (
+        RetroEngine(
+            bundle["model"], bundle["tokenizer"], blocks,
+            num_beams=3, constrained=True, batch_size=16,
+        ),
+        blocks,
+    )
 
 
 def _try_load_model():
-    """Load the optional ML model only when explicitly enabled."""
-    if os.getenv("BIORETROSYNTHESIS_ENABLE_MODEL", "0") != "1":
-        return None, None, False
+    """Attempt to load the ReactionT5v2 model."""
     try:
         engine, blocks = _load_real_engine()
         return engine, blocks, True
     except Exception as e:
-        logger.warning("Optional model unavailable; using RDKit fallback: %s", e)
+        logger.warning("Model not loaded: %s", e)
         return None, None, False
 
 
