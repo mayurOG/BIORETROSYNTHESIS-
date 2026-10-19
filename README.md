@@ -10,7 +10,7 @@
 
 ---
 
-DEPLOYED ON STREAMLIT - https://bioretrosynthesis-advanced-cmwrxjryhb9snf2noiq2sx.streamlit.app/
+DEPLOYED ON STREAMLIT - https://lwutycrhvz3ygiqd696rxc.streamlit.app/
 
 ---
 ## 🌟 Key Features
