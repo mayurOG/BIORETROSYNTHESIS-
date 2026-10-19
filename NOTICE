@@ -1,0 +1,23 @@
+BioRetrosynthesis Third-Party Notices
+
+Copyright © 2026 Mayur Nhavalde
+
+This repository's original source code is licensed under the GNU Affero General Public License, version 3 or later. See LICENSE.
+
+Bundled model attribution
+-------------------------
+The `final_model/` directory contains a PEFT adapter and tokenizer associated with:
+
+  ReactionT5v2-retrosynthesis-USPTO_50k
+  Copyright © Tatsuya Sagawa and Ryosuke Kojima
+  Source: https://huggingface.co/sagawa/ReactionT5v2-retrosynthesis-USPTO_50k
+  Repository: https://github.com/sagawatatsuya/ReactionT5v2
+  Upstream model license: MIT
+
+The upstream model card identifies the model as MIT-licensed. The license status of the locally fine-tuned adapter files is not explicitly declared in the upstream model card; users should verify those rights with the model authors before redistributing the adapter independently or combining it with other software.
+
+The model was fine-tuned using the USPTO_50k dataset. Dataset terms and provenance are separate from this repository's source-code license and should be reviewed before redistribution.
+
+Runtime dependencies
+--------------------
+The packages listed in `requirements.txt` are third-party software with their own licenses. Their licenses are not changed by this repository's AGPL-3.0 license. Review each package's distribution metadata and license before redistribution, especially RDKit, whose license terms should be checked separately from the Python packages using it.
