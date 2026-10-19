@@ -10,8 +10,3 @@ networkx>=3.0.0
 pubchempy>=1.0.4
 requests>=2.31.0
 scipy>=1.10.0
-# ReactionT5 inference runtime
-torch>=2.2.0
-transformers>=4.40.0
-peft>=0.14.0
-accelerate>=0.30.0

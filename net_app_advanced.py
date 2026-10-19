@@ -25,6 +25,7 @@ multi-route comparison — all computed from real chemistry via RDKit.
 Run:  streamlit run net_app_advanced.py
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import json
@@ -500,21 +501,28 @@ def resolve_to_smiles(user_input: str) -> tuple:
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 
-def _try_load_model():
-    """Attempt to load the ReactionT5v2 model."""
-    try:
-        from net_model_utils import load_model
-        from tbr_opt import RetroEngine, BuildingBlockIndex
+@st.cache_resource(show_spinner="Loading the retrosynthesis model...")
+def _load_real_engine():
+    from net_model_utils import load_model
+    from tbr_opt import RetroEngine, BuildingBlockIndex
 
-        bundle = load_model(str(PROJECT_ROOT / "final_model"))
-        blocks = BuildingBlockIndex.from_csv(str(PROJECT_ROOT / "bio_building_block.csv"))
-        engine = RetroEngine(
-            bundle["model"], bundle["tokenizer"], blocks,
-            num_beams=3, constrained=True, batch_size=16,
-        )
+    bundle = load_model(str(PROJECT_ROOT / "final_model"))
+    blocks = BuildingBlockIndex.from_csv(str(PROJECT_ROOT / "bio_building_block.csv"))
+    return RetroEngine(
+        bundle["model"], bundle["tokenizer"], blocks,
+        num_beams=3, constrained=True, batch_size=16,
+    ), blocks
+
+
+def _try_load_model():
+    """Load the optional ML model only when explicitly enabled."""
+    if os.getenv("BIORETROSYNTHESIS_ENABLE_MODEL", "0") != "1":
+        return None, None, False
+    try:
+        engine, blocks = _load_real_engine()
         return engine, blocks, True
     except Exception as e:
-        logger.info(f"Model not loaded (expected in demo mode): {e}")
+        logger.warning("Optional model unavailable; using RDKit fallback: %s", e)
         return None, None, False
 
 
