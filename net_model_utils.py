@@ -15,6 +15,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with BioRetrosynthesis. If not, see <https://www.gnu.org/licenses/>.
 
+from pathlib import Path
+from typing import Optional
+
 import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from peft import PeftConfig, PeftModel
@@ -24,14 +27,17 @@ from io import BytesIO
 import base64
 
 def load_model(model_path: str):
-    tokenizer = AutoTokenizer.from_pretrained("sagawa/ReactionT5v2-retrosynthesis-USPTO_50k", return_tensors="pt")
-    peft_config = PeftConfig.from_pretrained(model_path)
+    model_dir = Path(model_path).resolve()
+    tokenizer = AutoTokenizer.from_pretrained(
+        "sagawa/ReactionT5v2-retrosynthesis-USPTO_50k",
+        return_tensors="pt",
+    )
+    peft_config = PeftConfig.from_pretrained(str(model_dir))
     base_model = AutoModelForSeq2SeqLM.from_pretrained(
         peft_config.base_model_name_or_path,
-        device_map="auto",
-        torch_dtype=torch.float16
+        torch_dtype=torch.float32,
     )
-    model = PeftModel.from_pretrained(base_model, model_path)
+    model = PeftModel.from_pretrained(base_model, str(model_dir))
     model.eval()
     return {"model": model, "tokenizer": tokenizer}
 

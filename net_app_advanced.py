@@ -31,6 +31,7 @@ import json
 import time
 import base64
 import logging
+from pathlib import Path
 from io import BytesIO
 from typing import List, Dict, Optional, Set
 from collections import defaultdict
@@ -496,14 +497,17 @@ def resolve_to_smiles(user_input: str) -> tuple:
 #  RETROSYNTHESIS PREDICTION (uses real model if available, else smart demo)
 # ============================================================================
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
 def _try_load_model():
     """Attempt to load the ReactionT5v2 model."""
     try:
-        from net_model_utils import load_model, predict_multistep
+        from net_model_utils import load_model
         from tbr_opt import RetroEngine, BuildingBlockIndex
 
-        bundle = load_model("final_model")
-        blocks = BuildingBlockIndex.from_csv("bio_building_block.csv")
+        bundle = load_model(str(PROJECT_ROOT / "final_model"))
+        blocks = BuildingBlockIndex.from_csv(str(PROJECT_ROOT / "bio_building_block.csv"))
         engine = RetroEngine(
             bundle["model"], bundle["tokenizer"], blocks,
             num_beams=3, constrained=True, batch_size=16,
@@ -518,7 +522,7 @@ def _get_building_blocks() -> set:
     """Load building blocks as a set of SMILES."""
     try:
         import csv
-        with open("bio_building_block.csv", newline="") as f:
+        with open(PROJECT_ROOT / "bio_building_block.csv", newline="") as f:
             return {row[0].strip() for row in csv.reader(f) if row and row[0].strip()}
     except Exception:
         return set()
